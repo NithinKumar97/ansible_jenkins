@@ -49,6 +49,14 @@
         state: started
         enabled: yes
 
+    - name: Create directory for Groovy scripts if it does not exist
+      file:
+        path: /var/lib/jenkins/init.groovy.d
+        state: directory
+        owner: jenkins
+        group: jenkins
+        mode: '0755'    
+
     - name: Configure Jenkins with custom settings
       template:
         src: ../templates/jenkins_config.j2
