@@ -1,0 +1,110 @@
+---
+- name: Install Jenkins Master
+  hosts: jenkins_master
+  become: yes
+  vars_files:
+    - ../vars/main.yml
+
+  vars_prompt:
+    - name: "jenkins_admin_username"
+      prompt: "Enter the Jenkins admin username"
+      private: no
+
+    - name: "jenkins_admin_password"
+      prompt: "Enter the Jenkins admin password"
+      private: yes
+
+  tasks:
+    - name: Update apt package list
+      apt:
+        update_cache: yes
+
+    - name: Install required packages
+      apt:
+        name: "{{ required_packages }}"
+        state: present
+
+    - name: Add Jenkins GPG key
+      get_url:
+        url: "{{ jenkins_gpg_key_url }}"
+        dest: /usr/share/keyrings/jenkins-keyring.asc
+
+    - name: Add Jenkins APT repository
+      apt_repository:
+        repo: "{{ jenkins_repo }}"
+        state: present
+
+    - name: Update apt package list again
+      apt:
+        update_cache: yes
+
+    - name: Install Jenkins
+      apt:
+        name: jenkins
+        state: present
+
+    - name: Ensure Jenkins is running
+      service:
+        name: jenkins
+        state: started
+        enabled: yes
+
+    - name: Configure Jenkins with custom settings
+      template:
+        src: ../templates/jenkins_config.j2
+        dest: /etc/default/jenkins
+      notify:
+        - restart jenkins
+
+    - name: Retrieve Jenkins initial admin password
+      slurp:
+        src: /var/lib/jenkins/secrets/initialAdminPassword
+      register: initial_admin_password
+
+    - name: Show Jenkins initial admin password
+      debug:
+        msg: "Jenkins initial admin password: {{ initial_admin_password.content | b64decode }}"
+
+    - name: Install Jenkins CLI
+      get_url:
+        url: https://updates.jenkins.io/download/war/latest/jenkins.war
+        dest: /usr/local/bin/jenkins-cli.jar
+      register: jenkins_cli
+
+    - name: Wait for Jenkins to be fully up
+      uri:
+        url: http://localhost:8080/login
+        status_code: 200
+      register: jenkins_status
+      until: jenkins_status.status == 200
+      retries: 10
+      delay: 15
+
+    - name: Configure Jenkins admin user using Groovy script
+      copy:
+        content: |
+          import jenkins.model.*
+          import hudson.security.*
+          def instance = Jenkins.getInstance()
+          def hudsonRealm = new HudsonPrivateSecurityRealm(false)
+          hudsonRealm.createAccount("{{ jenkins_admin_username }}", "{{ jenkins_admin_password }}")
+          instance.setSecurityRealm(hudsonRealm)
+          def strategy = new FullControlOnceLoggedInAuthorizationStrategy()
+          instance.setAuthorizationStrategy(strategy)
+          instance.save()
+        dest: /var/lib/jenkins/init.groovy.d/admin.groovy
+
+    - name: Restart Jenkins to apply Groovy script
+      service:
+        name: jenkins
+        state: restarted
+
+    - name: Output Jenkins URL
+      debug:
+        msg: "Access Jenkins at http://{{ ansible_host }}:8080 with the username '{{ jenkins_admin_username }}'"
+
+  handlers:
+    - name: restart jenkins
+      service:
+        name: jenkins
+        state: restarted
