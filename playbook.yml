@@ -73,7 +73,7 @@
 
     - name: Wait for Jenkins to be fully up
       uri:
-        url: http://localhost:8080/login
+        url: http://{{ ansible_host }}:8080/login
         status_code: 200
       register: jenkins_status
       until: jenkins_status.status == 200
